@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Python IDE - Pyodide</title>
+    <style>
+        body, html {
+            height: 100%;
+            margin: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #282a36;
+            color: #f8f8f2;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .title {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .main-area {
+            display: flex;
+            flex: 1;
+            gap: 20px;
+            min-height: 0;
+        }
+        .editor-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #1e1f2c;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .output-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #1e1f2c;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        textarea {
+            flex: 1;
+            background: #282a36;
+            color: #f8f8f2;
+            border: none;
+            padding: 10px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            resize: none;
+            outline: none;
+        }
+        pre {
+            flex: 1;
+            margin: 0;
+            padding: 10px;
+            background: #282a36;
+            color: #50fa7b;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 14px;
+            overflow: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .button-bar {
+            padding: 10px;
+            background: #44475a;
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            background: #6272a4;
+            border: none;
+            color: white;
+            padding: 5px 12px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover {
+            background: #50fa7b;
+            color: #282a36;
+        }
+        .status {
+            padding: 5px;
+            font-size: 12px;
+            background: #44475a;
+            text-align: center;
+        }
+    </style>
+    <!-- Подключаем Pyodide из CDN -->
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="title">
+            <h2>🐍 Python IDE (Pyodide)</h2>
+            <p style="font-size: 14px;">Код выполняется в вашем браузере, не выгружается на сервер</p>
+        </div>
+        <div class="main-area">
+            <!-- Панель редактора кода -->
+            <div class="editor-panel">
+                <div class="button-bar">
+                    <button id="runCode">▶ Запустить</button>
+                    <button id="clearOutput">Очистить вывод</button>
+                    <button id="copyCode">Копировать код</button>
+                </div>
+                <textarea id="code" spellcheck="false">print("Привет, ученики 9 класса!")
+# Напишите свой код здесь
+a = 5
+b = 10
+print(f"Сумма: {a + b}")</textarea>
+            </div>
+            <!-- Панель вывода результата -->
+            <div class="output-panel">
+                <div class="button-bar">
+                    <span style="flex:1;">Вывод программы:</span>
+                </div>
+                <pre id="output">Ожидание запуска...</pre>
+                <div class="status" id="status">Статус: Загружается Pyodide...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let pyodide = null;
+
+        const statusDiv = document.getElementById('status');
+        const outputPre = document.getElementById('output');
+        const textarea = document.getElementById('code');
+        const runBtn = document.getElementById('runCode');
+        const clearBtn = document.getElementById('clearOutput');
+        const copyBtn = document.getElementById('copyCode');
+
+        // 1. Загружаем Pyodide
+        async function loadPyodideAndRun() {
+            statusDiv.textContent = 'Статус: Загрузка Python (Pyodide)...';
+            if (!pyodide) {
+                pyodide = await loadPyodide({
+                    indexURL: "https://cdn.jsdelivr.net/pyodide/v0.27.2/full/",
+                });
+            }
+            statusDiv.textContent = 'Статус: Готов к выполнению.';
+        }
+
+        // 2. Запуск кода
+        async function runPythonCode() {
+            if (!pyodide) {
+                outputPre.textContent = "Pyodide еще не загрузился. Подождите несколько секунд и попробуйте снова.";
+                return;
+            }
+
+            const code = textarea.value;
+            if (!code.trim()) {
+                outputPre.textContent = "[Нет кода для выполнения]";
+                return;
+            }
+
+            outputPre.textContent = "Выполняется...";
+            statusDiv.textContent = "Статус: Выполнение кода...";
+
+            try {
+                // Перенаправляем вывод на консоль, которую мы сможем перехватить
+                pyodide.runPython(`
+import sys
+from io import StringIO
+sys.stdout = StringIO()
+sys.stderr = StringIO()
+                `);
+                
+                // Выполняем код пользователя
+                try {
+                    await pyodide.runPythonAsync(code);
+                } catch (e) {
+                    console.error(e);
+                    // Получаем ошибку из stderr
+                    let stderr = pyodide.runPython("sys.stderr.getvalue()");
+                    outputPre.textContent = stderr || e.toString();
+                    statusDiv.textContent = "Статус: Ошибка выполнения";
+                    return;
+                }
+                
+                // Получаем результат выполнения
+                let stdout = pyodide.runPython("sys.stdout.getvalue()");
+                let stderr = pyodide.runPython("sys.stderr.getvalue()");
+                
+                let resultText = "";
+                if (stdout) resultText += stdout;
+                if (stderr) resultText += stderr;
+                
+                if (resultText === "") {
+                    resultText = "[Код выполнен успешно, вывод отсутствует]";
+                }
+                
+                outputPre.textContent = resultText;
+                statusDiv.textContent = "Статус: Выполнение завершено";
+            } catch (err) {
+                outputPre.textContent = "Ошибка: " + err;
+                statusDiv.textContent = "Статус: Ошибка выполнения";
+            } finally {
+                // Сбрасываем stdout/stderr, чтобы не накапливать
+                pyodide.runPython(`
+sys.stdout = sys.__stdout__
+sys.stderr = sys.__stderr__
+                `);
+            }
+        }
+
+        // Очистка вывода
+        function clearOutput() {
+            outputPre.textContent = "Очищено. Нажмите 'Запустить' для выполнения кода.";
+        }
+
+        // Копирование кода
+        async function copyCode() {
+            try {
+                await navigator.clipboard.writeText(textarea.value);
+                alert("Код скопирован в буфер обмена!");
+            } catch (err) {
+                alert("Не удалось скопировать код.");
+            }
+        }
+
+        // Загружаем Pyodide при загрузке страницы
+        loadPyodideAndRun();
+
+        // Вешаем обработчики на кнопки
+        runBtn.addEventListener('click', runPythonCode);
+        clearBtn.addEventListener('click', clearOutput);
+        copyBtn.addEventListener('click', copyCode);
+    </script>
+</body>
+</html>
